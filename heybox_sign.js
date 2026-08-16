@@ -14,6 +14,12 @@ const {
   OK_STATE,
   PATH_DATA_REPORT,
   sendShareEvents,
+  PATH_BBS_POST,
+  PATH_BBS_DELETE,
+  DEFAULT_REVIEW_CONTENT,
+  fetchGameTopicId,
+  postGameReview,
+  deletePost,
 } = require("./src/heybox");
 
 exports.name = "小黑盒.每日任务";
@@ -272,9 +278,6 @@ async function executeShareGameComment(task, client, fetchSnapshotFn) {
 const POST_TITLE = "前面忘了中间忘了后面也忘了";
 const POST_CONTENT = "孩子很爱用，很好吃，会复购";
 
-const PATH_BBS_POST = "/bbs/app/api/link/post";
-const PATH_BBS_DELETE = "/bbs/app/link/delete";
-
 async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
   // topic_id 在 maxjia 字段中，格式: heybox://{URL编码的JSON}
   let topicId = null;
@@ -340,25 +343,6 @@ async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
 }
 
 // ========== time_limit 任务：发表游戏评价 ==========
-const GAME_REVIEW_CONTENT = "好玩推荐游戏体验非常好";
-
-async function fetchGameTopicId(client, appId) {
-  try {
-    const resp = await client.getJson(PATH_GAME_COMMENTS, {
-      ...GAME_COMMENTS_QUERY_BASE,
-      appid: String(appId),
-    });
-    if (!isOkPayload(resp)) return null;
-    const links = resp?.result?.links;
-    if (!Array.isArray(links) || !links.length) return null;
-    const topics = links[0]?.topics;
-    if (!Array.isArray(topics) || !topics.length) return null;
-    return topics[0]?.topic_id ? String(topics[0].topic_id) : null;
-  } catch {
-    return null;
-  }
-}
-
 async function executeGameReviewTask(task, client, fetchSnapshotFn, account) {
   const parsed = parseMaxjia(task.maxjia);
   const appId = parsed?.app_id;
@@ -375,20 +359,7 @@ async function executeGameReviewTask(task, client, fetchSnapshotFn, account) {
 
   // 游戏评价需要使用 web client + link_tag=3 + appid(不带下划线) + score
   const webClient = new HeyboxWebClient(account);
-  const text = JSON.stringify([{ checked: false, text: GAME_REVIEW_CONTENT, type: "text" }]);
-
-  const postData = {
-    link_tag: "3",
-    appid: String(appId),
-    score: "5",
-    topic_ids: topicId,
-    text: text,
-    title: GAME_REVIEW_CONTENT,
-    desc: GAME_REVIEW_CONTENT,
-    draft: "0",
-  };
-
-  const resp = await webClient.postJson(PATH_BBS_POST, { body: postData });
+  const resp = await postGameReview(webClient, appId, topicId, 5, DEFAULT_REVIEW_CONTENT);
 
   if (resp.status === OK_STATE && resp.link_id) {
     const linkId = resp.link_id;
@@ -401,7 +372,7 @@ async function executeGameReviewTask(task, client, fetchSnapshotFn, account) {
       const after = findTaskByKey(snapshot, taskKey(task));
       if (after && after.state === FINISH_STATE) {
         tools.log(`任务已结算，正在删除帖子 ${linkId}...`);
-        const delResp = await client.postJson(PATH_BBS_DELETE, {}, { link_id: String(linkId) }, { baseUrl: API_BASE });
+        const delResp = await deletePost(client, linkId);
         if (delResp.status === OK_STATE) {
           tools.log(`帖子已删除`);
         } else {
@@ -413,7 +384,7 @@ async function executeGameReviewTask(task, client, fetchSnapshotFn, account) {
 
     // 任务未结算，删除帖子
     tools.log(`等待超时，正在删除帖子 ${linkId}...`);
-    const delResp = await client.postJson(PATH_BBS_DELETE, {}, { link_id: String(linkId) }, { baseUrl: API_BASE });
+    const delResp = await deletePost(client, linkId);
     if (delResp.status === OK_STATE) {
       tools.log(`帖子已删除`);
     } else {
