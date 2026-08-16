@@ -1,4 +1,4 @@
-const { OK_STATE } = require("./constants");
+const { API_BASE, OK_STATE } = require("./constants");
 const { tools } = require("../core");
 
 const PATH_BBS_POST = "/bbs/app/api/link/post";
@@ -11,6 +11,8 @@ const GAME_COMMENTS_QUERY_BASE = Object.freeze({
   limit: "30",
 });
 
+const DEFAULT_POST_TITLE = "前面忘了中间忘了后面也忘了";
+const DEFAULT_POST_CONTENT = "孩子很爱用，很好吃，会复购";
 const DEFAULT_REVIEW_CONTENT = "好玩推荐游戏体验非常好";
 
 function isOkPayload(payload) {
@@ -34,6 +36,21 @@ async function fetchGameTopicId(appClient, appId) {
   }
 }
 
+async function postTopic(appClient, topicId, title, content) {
+  const text = JSON.stringify([{ checked: false, text: content, type: "text" }]);
+
+  const postData = {
+    draft: "0",
+    topic_ids: String(topicId),
+    link_tag: "27",
+    text: text,
+    title: title,
+    desc: content,
+  };
+
+  return appClient.postJson(PATH_BBS_POST, {}, postData, { baseUrl: API_BASE });
+}
+
 async function postGameReview(webClient, appId, topicId, score, content) {
   const text = JSON.stringify([{ checked: false, text: content, type: "text" }]);
 
@@ -52,7 +69,7 @@ async function postGameReview(webClient, appId, topicId, score, content) {
 }
 
 async function deletePost(appClient, linkId) {
-  return appClient.postJson(PATH_BBS_DELETE, {}, { link_id: String(linkId) });
+  return appClient.postJson(PATH_BBS_DELETE, {}, { link_id: String(linkId) }, { baseUrl: API_BASE });
 }
 
 module.exports = {
@@ -60,8 +77,11 @@ module.exports = {
   PATH_BBS_DELETE,
   PATH_GAME_COMMENTS,
   GAME_COMMENTS_QUERY_BASE,
+  DEFAULT_POST_TITLE,
+  DEFAULT_POST_CONTENT,
   DEFAULT_REVIEW_CONTENT,
   fetchGameTopicId,
+  postTopic,
   postGameReview,
   deletePost,
 };

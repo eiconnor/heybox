@@ -14,10 +14,11 @@ const {
   OK_STATE,
   PATH_DATA_REPORT,
   sendShareEvents,
-  PATH_BBS_POST,
-  PATH_BBS_DELETE,
+  DEFAULT_POST_TITLE,
+  DEFAULT_POST_CONTENT,
   DEFAULT_REVIEW_CONTENT,
   fetchGameTopicId,
+  postTopic,
   postGameReview,
   deletePost,
 } = require("./src/heybox");
@@ -275,9 +276,6 @@ async function executeShareGameComment(task, client, fetchSnapshotFn) {
 }
 
 // ========== time_limit 任务：发布内容 ==========
-const POST_TITLE = "前面忘了中间忘了后面也忘了";
-const POST_CONTENT = "孩子很爱用，很好吃，会复购";
-
 async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
   // topic_id 在 maxjia 字段中，格式: heybox://{URL编码的JSON}
   let topicId = null;
@@ -295,24 +293,7 @@ async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
     return { ok: false, unsupported: true, message: `${task.title} 缺少 topic_id` };
   }
 
-  const text = JSON.stringify([{ checked: false, text: POST_CONTENT, type: "text" }]);
-
-  // 使用 postJson 发送明文 form-urlencoded 数据
-  const postData = {
-    draft: "0",
-    topic_ids: String(topicId),
-    link_tag: "27",
-    text: text,
-    title: POST_TITLE,
-    desc: POST_CONTENT,
-  };
-
-  const resp = await client.postJson(
-    PATH_BBS_POST,
-    {},
-    postData,
-    { baseUrl: API_BASE },
-  );
+  const resp = await postTopic(client, topicId, DEFAULT_POST_TITLE, DEFAULT_POST_CONTENT);
 
   if (resp.status === OK_STATE && resp.result && resp.result.link_id) {
     const linkId = resp.result.link_id;
@@ -323,7 +304,7 @@ async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
 
     // 删除帖子
     tools.log(`正在删除帖子 ${linkId}...`);
-    const delResp = await client.postJson(PATH_BBS_DELETE, {}, { link_id: String(linkId) }, { baseUrl: API_BASE });
+    const delResp = await deletePost(client, linkId);
     if (delResp.status === OK_STATE) {
       tools.log(`帖子已删除`);
     } else {

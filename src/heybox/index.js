@@ -4,14 +4,14 @@ const signature = require("./signature");
 const { HeyboxAccount } = require("./account");
 const { HeyboxAppClient, HeyboxWebClient } = require("./api");
 const report = require("./report");
-const gameComment = require("./game_comment");
+const post = require("./post");
 
 module.exports = {
   ...constants,
   ...cookie,
   ...signature,
   ...report,
-  ...gameComment,
+  ...post,
   HeyboxAccount,
   HeyboxAppClient,
   HeyboxWebClient,
