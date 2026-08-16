@@ -10,6 +10,7 @@ const {
   DATA_NAME,
   HeyboxAccount,
   HeyboxAppClient,
+  HeyboxWebClient,
   OK_STATE,
   PATH_DATA_REPORT,
   sendShareEvents,
@@ -338,19 +339,107 @@ async function executeTimeLimitTask(task, client, fetchSnapshotFn) {
   return { ok: false, message: `发帖失败: ${resp.msg || resp.status}` };
 }
 
+// ========== time_limit 任务：发表游戏评价 ==========
+const GAME_REVIEW_CONTENT = "好玩推荐游戏体验非常好";
+
+async function fetchGameTopicId(client, appId) {
+  try {
+    const resp = await client.getJson(PATH_GAME_COMMENTS, {
+      ...GAME_COMMENTS_QUERY_BASE,
+      appid: String(appId),
+    });
+    if (!isOkPayload(resp)) return null;
+    const links = resp?.result?.links;
+    if (!Array.isArray(links) || !links.length) return null;
+    const topics = links[0]?.topics;
+    if (!Array.isArray(topics) || !topics.length) return null;
+    return topics[0]?.topic_id ? String(topics[0].topic_id) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function executeGameReviewTask(task, client, fetchSnapshotFn, account) {
+  const parsed = parseMaxjia(task.maxjia);
+  const appId = parsed?.app_id;
+
+  if (!appId) {
+    return { ok: false, unsupported: true, message: `${task.title} 缺少 app_id` };
+  }
+
+  // 通过游戏评论获取 topic_id
+  const topicId = await fetchGameTopicId(client, appId);
+  if (!topicId) {
+    return { ok: false, message: `${task.title} 无法获取游戏 topic_id` };
+  }
+
+  // 游戏评价需要使用 web client + link_tag=3 + appid(不带下划线) + score
+  const webClient = new HeyboxWebClient(account);
+  const text = JSON.stringify([{ checked: false, text: GAME_REVIEW_CONTENT, type: "text" }]);
+
+  const postData = {
+    link_tag: "3",
+    appid: String(appId),
+    score: "5",
+    topic_ids: topicId,
+    text: text,
+    title: GAME_REVIEW_CONTENT,
+    desc: GAME_REVIEW_CONTENT,
+    draft: "0",
+  };
+
+  const resp = await webClient.postJson(PATH_BBS_POST, { body: postData });
+
+  if (resp.status === OK_STATE && resp.link_id) {
+    const linkId = resp.link_id;
+    tools.log(`游戏评价发帖成功: link_id=${linkId}`);
+
+    // 等待任务结算
+    for (let i = 0; i < 7; i++) {
+      await tools.sleep(2000);
+      const snapshot = await fetchSnapshotFn();
+      const after = findTaskByKey(snapshot, taskKey(task));
+      if (after && after.state === FINISH_STATE) {
+        tools.log(`任务已结算，正在删除帖子 ${linkId}...`);
+        const delResp = await client.postJson(PATH_BBS_DELETE, {}, { link_id: String(linkId) }, { baseUrl: API_BASE });
+        if (delResp.status === OK_STATE) {
+          tools.log(`帖子已删除`);
+        } else {
+          tools.log(`删除失败: ${delResp.msg || "未知错误"}`);
+        }
+        return { ok: true, message: `${task.title} 完成`, snapshot };
+      }
+    }
+
+    // 任务未结算，删除帖子
+    tools.log(`等待超时，正在删除帖子 ${linkId}...`);
+    const delResp = await client.postJson(PATH_BBS_DELETE, {}, { link_id: String(linkId) }, { baseUrl: API_BASE });
+    if (delResp.status === OK_STATE) {
+      tools.log(`帖子已删除`);
+    } else {
+      tools.log(`删除失败: ${delResp.msg || "未知错误"}`);
+    }
+
+    return { ok: false, message: `游戏评价发帖成功(link_id=${linkId})但任务未完成` };
+  }
+
+  return { ok: false, message: `游戏评价发帖失败: ${resp.msg || resp.status}` };
+}
+
 const TASK_HANDLERS = {
   "1": executeSharePost,
   "19": executeShareGameDetail,
   "31": executeShareGameComment,
   "33": executeTimeLimitTask,
+  "24": executeGameReviewTask,
 };
 
-async function executeTask(task, client, fetchSnapshotFn) {
+async function executeTask(task, client, fetchSnapshotFn, account) {
   // 支持所有已实现的任务类型（不限于 isDailyTask）
   const handler = isSignTask(task) ? (t, c) => executeSign(c) : TASK_HANDLERS[task.taskId];
   if (!handler) return { ok: false, unsupported: true, message: `未支持任务 task_id=${task.taskId}` };
   try {
-    return await handler(task, client, fetchSnapshotFn);
+    return await handler(task, client, fetchSnapshotFn, account);
   } catch (error) {
     return { ok: false, message: `${task.title} 请求异常 ${error.message}` };
   }
@@ -386,7 +475,7 @@ async function runAccount(account, runtime) {
     const latestTask = findTaskByKey(snapshot, key);
     if (!latestTask || latestTask.state !== WAITING_STATE) continue;
 
-    const result = await executeTask(latestTask, client, () => fetchSnapshot(client));
+    const result = await executeTask(latestTask, client, () => fetchSnapshot(client), account);
     if (result.unsupported) {
       unsupported.add(latestTask.title || key);
       continue;
